@@ -2,13 +2,60 @@
 #include <iomanip>
 #include <fstream>
 #include <vector>
+#include <string>
 #include <stdexcept>
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <assert.h>
 
+#ifdef __MINGW32__
+#undef _WIN32
+#endif
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <fcntl.h>
+#include <io.h>
+#endif
+
+#ifdef _WIN32
+typedef std::wostream utf8_ostream;
+utf8_ostream &ucout = std::wcout;
+#else
+typedef std::ostream utf8_ostream;
+utf8_ostream &ucout = std::cout;
+#endif
+
 typedef uint32_t u32char;
+
+void utf8_init()
+{
+#ifdef _WIN32
+    _setmode(_fileno(stdout), _O_U16TEXT);
+#endif
+}
+
+int utf8_printf(const char *format, ...)
+{
+    int result = 0;
+
+    va_list args;
+    va_start(args, format);
+#ifdef _WIN32
+    std::vector<wchar_t> buffer;
+    buffer.resize(MultiByteToWideChar(CP_UTF8, 0, format, -1, 0, 0));
+    MultiByteToWideChar(CP_UTF8, 0, format, -1, &buffer[0], buffer.size());
+    result = wprintf(buffer.data(), args);
+#else
+    result = printf(format, args);
+#endif
+    va_end(args);
+
+    return result;
+}
 
 int utf8_strlen(const char *str)
 {
@@ -33,6 +80,129 @@ int utf32_strlen(const u32char *str)
     const u32char *pos = str;
     for (; *pos; ++pos, counter++);
     return counter;
+}
+
+int utf8_strcmp(const char *lhs, const char *rhs)
+{
+    const char *s1 = lhs;
+    const char *s2 = rhs;
+
+    for (; *s1 || *s2; s1++, s2++) {
+        if (*s1 < *s2) {
+            return -1;
+        } else if (*s1 > *s2) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+int utf32_strcmp(const u32char *lhs, const u32char *rhs)
+{
+    const u32char *s1 = lhs;
+    const u32char *s2 = rhs;
+
+    for (; *s1 || *s2; s1++, s2++) {
+        if (*s1 < *s2) {
+            return -1;
+        } else if (*s1 > *s2) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+char *utf8_strcpy(char *dst, const char *src)
+{
+    // copy all raw bytes   
+    for (int i = 0; (dst[i] = src[i]) != '\0'; i++);
+    return dst;
+}
+
+u32char *utf32_strcpy(u32char *dst, const u32char *src)
+{
+    for (int i = 0; (dst[i] = src[i]) != '\0'; i++);
+    return dst;
+}
+
+char *utf8_strncpy(char *dst, const char *src, size_t n)
+{
+    size_t i = 0;
+    size_t count = 0;
+    
+    size_t max = strlen(dst) + 1;
+
+    for (; src[i] != '\0'; i++, count++) {
+
+        if (count == n) {
+            // finished copying, jump to end
+            break;
+        }
+
+        unsigned char c = (unsigned char)src[i];
+
+        if (c >= 0 && c <= 127) {
+            dst[i] = src[i];
+        } else if ((c & 0xE0) == 0xC0) {
+            dst[i] = src[i];
+            dst[i + 1] = src[i + 1];
+            i += 1;
+        } else if ((c & 0xF0) == 0xE0) {
+            dst[i] = src[i];
+            dst[i + 1] = src[i + 1];
+            dst[i + 2] = src[i + 2];
+            i += 2;
+        } else if ((c & 0xF8) == 0xF0) {
+            dst[i] = src[i];
+            dst[i + 1] = src[i + 1];
+            dst[i + 2] = src[i + 2];
+            dst[i + 3] = src[i + 3];
+            i += 3;
+        } else { 
+            break; // invalid utf-8
+        }
+    }
+
+    // fill rest with NUL bytes
+    for (; i < max; i++) {
+        dst[i] = '\0';
+    }
+
+    return dst;
+}
+
+u32char *utf32_strncpy(u32char *s1, const u32char *s2, size_t n)
+{
+    u32char *s = s1;
+    while (n > 0 && *s2 != '\0') {
+        *s++ = *s2++;
+        --n;
+    }
+    while (n > 0) {
+        *s++ = '\0';
+        --n;
+    }
+    return s1;
+}
+
+char *utf8_strcat(char *dst, const char *src)
+{
+    while (*dst) {
+        dst++;
+    }
+    while (*dst++ = *src++);
+    return --dst;
+}
+
+u32char *utf32_strcat(u32char *dst, const u32char *src)
+{
+    while (*dst) {
+        dst++;
+    }
+    while (*dst++ = *src++);
+    return --dst;
 }
 
 u32char char8to32(const char *str)
@@ -149,54 +319,78 @@ void utf8_charat(const char *str, char *dst, int index)
 class Utf8String {
 public:
     Utf8String();
+    explicit Utf8String(size_t size);
     Utf8String(const char *str);
     Utf8String(const Utf8String &other);
     ~Utf8String();
 
+    inline char *GetData() const { return m_data; }
+    inline size_t GetBufferSize() const { return m_size; }
+
     Utf8String &operator=(const char *str);
     Utf8String &operator=(const Utf8String &other);
+    bool operator==(const char *str) const;
+    bool operator==(const Utf8String &other) const;
+    Utf8String operator+(const char *str) const;
+    Utf8String operator+(const Utf8String &other) const;
+    Utf8String &operator+=(const char *str);
+    Utf8String &operator+=(const Utf8String &other);
 
     inline size_t Length() const
     {
-        if (m_data == nullptr) {
-            return 0;
-        }
-
-        return utf8_strlen(m_data);
+        return (m_data != nullptr) ? utf8_strlen(m_data) : 0;
     }
 
     inline u32char CharAt(int index) const
     {
         u32char result;
-
-        if (m_data == nullptr || ((result = utf8_charat(m_data, index) == ((u32char)-1)))) {
+        if (m_data == nullptr || ((result = utf8_charat(m_data, index) == (u32char(-1))))) {
             throw std::out_of_range("index out of range");
         }
-
         return result;
     }
 
+    friend utf8_ostream &operator<<(utf8_ostream &os, const Utf8String &str);
+
 private:
     char *m_data;
+    size_t m_size; // buffer size (not length)
 };
 
 Utf8String::Utf8String()
-    : m_data(nullptr)
+    : m_data(new char[1]),
+      m_size(1)
 {
+    m_data[0] = '\0';
+}
+
+Utf8String::Utf8String(size_t size)
+    : m_data(new char[size + 1]),
+      m_size(size + 1)
+{
+    memset(m_data, 0, m_size);
 }
 
 Utf8String::Utf8String(const char *str)
 {
-    size_t len = strlen(str) + 1;
-    m_data = new char[len];
-    strncpy(m_data, str, len);
+    if (str == nullptr) {
+        m_data = new char[1];
+        m_data[0] = '\0';
+        m_size = 1;
+    } else {
+        // copy raw bytes
+        m_size = strlen(str) + 1;
+        m_data = new char[m_size];
+        strcpy(m_data, str);
+    }
 }
 
 Utf8String::Utf8String(const Utf8String &other)
 {
-    size_t len = strlen(other.m_data) + 1;
-    m_data = new char[len];
-    strncpy(m_data, other.m_data, len);
+    // copy raw bytes
+    m_size = strlen(other.m_data) + 1;
+    m_data = new char[m_size];
+    strcpy(m_data, other.m_data);
 }
 
 Utf8String::~Utf8String()
@@ -212,9 +406,16 @@ Utf8String &Utf8String::operator=(const char *str)
         delete[] m_data;
     }
 
-    size_t len = strlen(str) + 1;
-    m_data = new char[len];
-    strncpy(m_data, str, len);
+    if (str == nullptr) {
+        m_data = new char[1];
+        m_data[0] = '\0';
+        m_size = 1;
+    } else {
+        // copy raw bytes
+        m_size = strlen(str) + 1;
+        m_data = new char[m_size];
+        strcpy(m_data, str);
+    }
 
     return *this;
 }
@@ -224,17 +425,89 @@ Utf8String &Utf8String::operator=(const Utf8String &other)
     if (m_data != nullptr) {
         delete[] m_data;
     }
-
-    size_t len = strlen(other.m_data) + 1;
-    m_data = new char[len];
-    strncpy(m_data, other.m_data, len);
+    
+    // copy raw bytes
+    m_size = strlen(other.m_data) + 1;
+    m_data = new char[m_size];
+    strcpy(m_data, other.m_data);
 
     return *this;
 }
 
+bool Utf8String::operator==(const char *str) const
+{
+    return !(utf8_strcmp(m_data, str));
+}
+
+bool Utf8String::operator==(const Utf8String &other) const
+{
+    return !(utf8_strcmp(m_data, other.m_data));
+}
+
+Utf8String Utf8String::operator+(const char *str) const
+{
+    Utf8String result(Length() + strlen(str));
+
+    utf8_strcpy(result.m_data, m_data);
+    utf8_strcat(result.m_data, str);
+
+    return result;
+}
+
+Utf8String Utf8String::operator+(const Utf8String &other) const
+{
+    Utf8String result(Length() + other.Length());
+
+    utf8_strcpy(result.m_data, m_data);
+    utf8_strcat(result.m_data, other.m_data);
+
+    return result;
+}
+
+Utf8String &Utf8String::operator+=(const char *str)
+{
+    size_t this_len = strlen(m_data);
+    size_t other_len = strlen(str);
+
+    if (this_len + other_len < m_size) {
+        strcat(m_data, str);
+        m_size += other_len;
+    } else {
+        // we must delete and recreate the array
+        m_size = this_len + other_len + 1;
+
+        char *new_data = new char[m_size];
+        strcpy(new_data, m_data);
+        strcat(new_data, str);
+        delete[] m_data;
+        m_data = new_data;
+    }
+
+    return *this;
+}
+
+Utf8String &Utf8String::operator+=(const Utf8String &other)
+{
+    return operator+=(other.m_data);
+}
+
+utf8_ostream &operator<<(utf8_ostream &os, const Utf8String &str)
+{
+#ifdef _WIN32
+    std::vector<wchar_t> buffer;
+    buffer.resize(MultiByteToWideChar(CP_UTF8, 0, str.m_data, -1, 0, 0));
+    MultiByteToWideChar(CP_UTF8, 0, str.m_data, -1, &buffer[0], buffer.size());
+    os << buffer.data();
+#else
+    os << str.m_data;
+#endif
+    return os;
+}
+
 int main()
 {
-    std::cout << "Reading utf-8 file \"utf-8-test.txt\"...\n";
+    utf8_init();
+
     std::ifstream file("utf-8-test.txt", std::ios::in | std::ios::ate | std::ios::binary);
 
     if (file.is_open()) {
@@ -246,64 +519,31 @@ int main()
 
         file.read(buffer, len);
 
-        std::cout << "strlen(buffer) = " << strlen(buffer) << "\n";
-        std::cout << "utf8_strlen(buffer) = " << utf8_strlen(buffer) << "\n";
+        Utf8String us1("string 1, hi!");
+        Utf8String us2("string 2.");
+        us1 += "Blafjdjfkjdskfkjldsf";
+        
+        ucout << "us1 = " << us1 << "\n";
+        ucout << "us2 = " << us2 << "\n";
 
+        ucout << "strlen(buffer) = " << strlen(buffer) << "\n";
+        ucout << "utf8_strlen(buffer) = " << utf8_strlen(buffer) << "\n";
 
         u32char utf32_test[500];
         memset(utf32_test, 0, sizeof(utf32_test));
         utf8to32(buffer, utf32_test, 500);
 
-        std::cout << "utf32_strlen(utf32_test) = " << utf32_strlen(utf32_test) << "\n";
+        ucout << "utf32_strlen(utf32_test) = " << utf32_strlen(utf32_test) << "\n";
 
-        { // convert utf-32 char to utf-8 char array
+        { // get characters at index
             char utf8_char_buffer[4] = { 0 };
-            utf8_charat(buffer, utf8_char_buffer, 8);
-
-            std::cout << "utf8_charat(buffer, 8) = " << utf8_char_buffer << "\n";
+            utf8_charat(buffer, utf8_char_buffer, 9);
+            ucout << "utf8_charat(buffer, 9) = " << Utf8String(utf8_char_buffer) << "\n";
         }
 
-        std::cout << "\n";
-        std::cout << "std::cout << buffer = " << buffer << "\n";
-
-        /*std::cout << "\nConverting to UTF-16...\n";
-        
-        std::u16string utf16str = utf8_to_utf16(buffer);
-        std::cout << "length of utf-16 string = " << utf16str.length() << "\n";*/
-/*
-        std::cout << "\n\n";
-        char utf8_test[] = "ʥ";
-        int num_bytes = strlen(utf8_test);
-
-        //u16char test16 = char8to16(utf8_test);
-        u32char test32 = char8to32(utf8_test);
-        
-        std::cout << "strlen(utf8_test) = " << num_bytes << "\n";
-        std::cout << "utf8_strlen(utf8_test) = " << utf8_strlen(utf8_test) << "\n";
-        std::cout << "\n\n";*/
-
-        /*std::cout << "utf-16:\t";
-        const char *test_bytes16 = reinterpret_cast<const char*>(&test16);
-        for (int i = 0; i < sizeof(test16); i++) {
-            printf("0x%02x ", (unsigned char)test_bytes16[i]);
-        }
-        std::cout << "\n\n";*/
-
-        /*const char *test_bytes32 = reinterpret_cast<const char*>(&test32);
-        std::cout << "utf-32:\t";
-        for (int i = 0; i < sizeof(test32); i++) {
-            printf("0x%02x ", (unsigned char)test_bytes32[i]);
-        }
-        std::cout << "\n\n";*/
-
-        /*std::cout << "utf-32:\t";
-        const char *dst_buffer_bytes = reinterpret_cast<const char *>(dst_buffer);
-        for (int i = 0; i < sizeof(dst_buffer); i++) {
-            printf("0x%02x ", (unsigned char)dst_buffer_bytes[i]);
-        }
-        std::cout << "\n\n";*/
+        ucout << Utf8String(buffer);
 
     } else {
-        std::cout << "Could not open file.\n";
+        ucout << "Could not open file.\n";
     }
 }
