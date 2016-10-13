@@ -31,30 +31,30 @@ utf8_ostream &ucout = std::cout;
 
 typedef uint32_t u32char;
 
+/*struct Utf32Char {
+public:
+    Utf32Char(uint32_t c = 0)
+        : m_data.c(c);
+    {
+    }
+
+    char &operator[](size_t index)
+    {
+        return m_data.b[index];
+    }
+
+private:
+    union {
+        uint32_t c;
+        char b[4];
+    } m_data;
+};*/
+
 void utf8_init()
 {
 #ifdef _WIN32
     _setmode(_fileno(stdout), _O_U16TEXT);
 #endif
-}
-
-int utf8_printf(const char *format, ...)
-{
-    int result = 0;
-
-    va_list args;
-    va_start(args, format);
-#ifdef _WIN32
-    std::vector<wchar_t> buffer;
-    buffer.resize(MultiByteToWideChar(CP_UTF8, 0, format, -1, 0, 0));
-    MultiByteToWideChar(CP_UTF8, 0, format, -1, &buffer[0], buffer.size());
-    result = wprintf(buffer.data(), args);
-#else
-    result = printf(format, args);
-#endif
-    va_end(args);
-
-    return result;
 }
 
 int utf8_strlen(const char *str)
@@ -82,15 +82,58 @@ int utf32_strlen(const u32char *str)
     return counter;
 }
 
-int utf8_strcmp(const char *lhs, const char *rhs)
+int utf8_strcmp(const char *s1, const char *s2)
 {
-    const char *s1 = lhs;
-    const char *s2 = rhs;
+    for (; *s1 || *s2;) {
+        unsigned char c;
 
-    for (; *s1 || *s2; s1++, s2++) {
-        if (*s1 < *s2) {
+        u32char c1 = 0;
+        char *c1_bytes = reinterpret_cast<char*>(&c1);
+
+        u32char c2 = 0;
+        char *c2_bytes = reinterpret_cast<char*>(&c2);
+
+        // get the character for s1
+        c = (unsigned char)*s1;
+
+        if (c >= 0 && c <= 127) {
+            c1_bytes[0] = *(s1++);
+        } else if ((c & 0xE0) == 0xC0) {
+            c1_bytes[0] = *(s1++);
+            c1_bytes[1] = *(s1++);
+        } else if ((c & 0xF0) == 0xE0) {
+            c1_bytes[0] = *(s1++);
+            c1_bytes[1] = *(s1++);
+            c1_bytes[2] = *(s1++);
+        } else if ((c & 0xF8) == 0xF0) {
+            c1_bytes[0] = *(s1++);
+            c1_bytes[1] = *(s1++);
+            c1_bytes[2] = *(s1++);
+            c1_bytes[3] = *(s1++);
+        }
+
+        // get the character for s2
+        c = (unsigned char)*s2;
+
+        if (c >= 0 && c <= 127) {
+            c2_bytes[0] = *(s2++);
+        } else if ((c & 0xE0) == 0xC0) {
+            c2_bytes[0] = *(s2++);
+            c2_bytes[1] = *(s2++);
+        } else if ((c & 0xF0) == 0xE0) {
+            c2_bytes[0] = *(s2++);
+            c2_bytes[1] = *(s2++);
+            c2_bytes[2] = *(s2++);
+        } else if ((c & 0xF8) == 0xF0) {
+            c2_bytes[0] = *(s2++);
+            c2_bytes[1] = *(s2++);
+            c2_bytes[2] = *(s2++);
+            c2_bytes[3] = *(s2++);
+        }
+
+        if (c1 < c2) {
             return -1;
-        } else if (*s1 > *s2) {
+        } else if (c1 > c2) {
             return 1;
         }
     }
@@ -332,21 +375,19 @@ public:
     Utf8String &operator=(const Utf8String &other);
     bool operator==(const char *str) const;
     bool operator==(const Utf8String &other) const;
+    bool operator<(const char *str) const;
+    bool operator<(const Utf8String &other) const;
+    bool operator<=(const char *str) const;
+    bool operator<=(const Utf8String &other) const;
+    bool operator>(const char *str) const;
+    bool operator>(const Utf8String &other) const;
+    bool operator>=(const char *str) const;
+    bool operator>=(const Utf8String &other) const;
     Utf8String operator+(const char *str) const;
     Utf8String operator+(const Utf8String &other) const;
     Utf8String &operator+=(const char *str);
     Utf8String &operator+=(const Utf8String &other);
-
-    //Utf8String Substring()
-
-    inline u32char CharAt(int index) const
-    {
-        u32char result;
-        if (m_data == nullptr || ((result = utf8_charat(m_data, index) == (u32char(-1))))) {
-            throw std::out_of_range("index out of range");
-        }
-        return result;
-    }
+    u32char operator[](size_t index) const;
 
     friend utf8_ostream &operator<<(utf8_ostream &os, const Utf8String &str);
 
@@ -445,12 +486,54 @@ Utf8String &Utf8String::operator=(const Utf8String &other)
 
 bool Utf8String::operator==(const char *str) const
 {
-    return !(utf8_strcmp(m_data, str));
+    // compare raw bytes
+    return !(strcmp(m_data, str));
 }
 
 bool Utf8String::operator==(const Utf8String &other) const
 {
-    return !(utf8_strcmp(m_data, other.m_data));
+    // compare raw bytes
+    return !(strcmp(m_data, other.m_data));
+}
+
+bool Utf8String::operator<(const char *str) const
+{
+    return (utf8_strcmp(m_data, str) == -1);
+}
+
+bool Utf8String::operator<(const Utf8String &other) const
+{
+    return (utf8_strcmp(m_data, other.m_data) == -1);
+}
+
+bool Utf8String::operator<=(const char *str) const
+{
+    return !(strcmp(m_data, str)) || (utf8_strcmp(m_data, str) == -1);
+}
+
+bool Utf8String::operator<=(const Utf8String &other) const
+{
+    return !(strcmp(m_data, other.m_data)) || (utf8_strcmp(m_data, other.m_data) == -1);
+}
+
+bool Utf8String::operator>(const char *str) const
+{
+    return (utf8_strcmp(m_data, str) == 1);
+}
+
+bool Utf8String::operator>(const Utf8String &other) const
+{
+    return (utf8_strcmp(m_data, other.m_data) == 1);
+}
+
+bool Utf8String::operator>=(const char *str) const
+{
+    return !(strcmp(m_data, str)) || (utf8_strcmp(m_data, str) == 1);
+}
+
+bool Utf8String::operator>=(const Utf8String &other) const
+{
+    return !(strcmp(m_data, other.m_data)) || (utf8_strcmp(m_data, other.m_data) == 1);
 }
 
 Utf8String Utf8String::operator+(const char *str) const
@@ -510,6 +593,15 @@ Utf8String &Utf8String::operator+=(const Utf8String &other)
     return operator+=(other.m_data);
 }
 
+u32char Utf8String::operator[](size_t index) const
+{
+    u32char result;
+    if (m_data == nullptr || ((result = utf8_charat(m_data, index) == (u32char(-1))))) {
+        throw std::out_of_range("index out of range");
+    }
+    return result;
+}
+
 utf8_ostream &operator<<(utf8_ostream &os, const Utf8String &str)
 {
 #ifdef _WIN32
@@ -538,17 +630,26 @@ int main()
 
         file.read(buffer, len);
 
-        Utf8String us1("string 1, hi!");
-        Utf8String us2("string 2.");
-        us1 += "Blafjdjfkjdskfkjldsf";
+        Utf8String us1("Falsches Üben von Xylophonmusik quält jeden größeren Zwerg");
+        Utf8String us2("Zwölf Boxkämpfer jagten Eva quer über den Sylter Deich");
 
         ucout << "us1 :: " << us1 << "\n";
         ucout << "us2 :: " << us2 << "\n";
         ucout << "utf8_strlen(us1.GetData()) :: " << utf8_strlen(us1.GetData()) << "\n";
         ucout << "us1.GetLength() :: " << us1.GetLength() << "\n";
+        ucout << "us1 < us2 :: " << (us1 < us2) << "\n";
 
         ucout << "strlen(buffer) :: " << strlen(buffer) << "\n";
         ucout << "utf8_strlen(buffer) :: " << utf8_strlen(buffer) << "\n";
+
+        ucout << "\n\n=== Test write to file out.txt ===\n\n";
+
+        std::ofstream outfile("out.txt", std::ios::out | std::ios::binary);
+        outfile.write(us1.GetData(), us1.GetBufferSize() - 1);
+        outfile.write("\n", 1);
+        outfile.write(us2.GetData(), us2.GetBufferSize() - 1);
+        outfile.write("\n", 1);
+        outfile.close();
 
         u32char utf32_test[500];
         memset(utf32_test, 0, sizeof(utf32_test));
