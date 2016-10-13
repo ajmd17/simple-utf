@@ -326,6 +326,7 @@ public:
 
     inline char *GetData() const { return m_data; }
     inline size_t GetBufferSize() const { return m_size; }
+    inline size_t GetLength() const { return m_length; }
 
     Utf8String &operator=(const char *str);
     Utf8String &operator=(const Utf8String &other);
@@ -336,10 +337,7 @@ public:
     Utf8String &operator+=(const char *str);
     Utf8String &operator+=(const Utf8String &other);
 
-    inline size_t Length() const
-    {
-        return (m_data != nullptr) ? utf8_strlen(m_data) : 0;
-    }
+    //Utf8String Substring()
 
     inline u32char CharAt(int index) const
     {
@@ -355,18 +353,21 @@ public:
 private:
     char *m_data;
     size_t m_size; // buffer size (not length)
+    size_t m_length;
 };
 
 Utf8String::Utf8String()
     : m_data(new char[1]),
-      m_size(1)
+      m_size(1),
+      m_length(0)
 {
     m_data[0] = '\0';
 }
 
 Utf8String::Utf8String(size_t size)
     : m_data(new char[size + 1]),
-      m_size(size + 1)
+      m_size(size + 1),
+      m_length(0)
 {
     memset(m_data, 0, m_size);
 }
@@ -377,11 +378,14 @@ Utf8String::Utf8String(const char *str)
         m_data = new char[1];
         m_data[0] = '\0';
         m_size = 1;
+        m_length = 0;
     } else {
         // copy raw bytes
         m_size = strlen(str) + 1;
         m_data = new char[m_size];
         strcpy(m_data, str);
+        // recalculate length
+        m_length = utf8_strlen(m_data);
     }
 }
 
@@ -391,6 +395,7 @@ Utf8String::Utf8String(const Utf8String &other)
     m_size = strlen(other.m_data) + 1;
     m_data = new char[m_size];
     strcpy(m_data, other.m_data);
+    m_length = other.m_length;
 }
 
 Utf8String::~Utf8String()
@@ -410,11 +415,14 @@ Utf8String &Utf8String::operator=(const char *str)
         m_data = new char[1];
         m_data[0] = '\0';
         m_size = 1;
+        m_length = 0;
     } else {
         // copy raw bytes
         m_size = strlen(str) + 1;
         m_data = new char[m_size];
         strcpy(m_data, str);
+        // recalculate length
+        m_length = utf8_strlen(m_data);
     }
 
     return *this;
@@ -430,6 +438,7 @@ Utf8String &Utf8String::operator=(const Utf8String &other)
     m_size = strlen(other.m_data) + 1;
     m_data = new char[m_size];
     strcpy(m_data, other.m_data);
+    m_length = other.m_length;
 
     return *this;
 }
@@ -446,20 +455,26 @@ bool Utf8String::operator==(const Utf8String &other) const
 
 Utf8String Utf8String::operator+(const char *str) const
 {
-    Utf8String result(Length() + strlen(str));
+    Utf8String result(m_length + strlen(str));
 
     utf8_strcpy(result.m_data, m_data);
     utf8_strcat(result.m_data, str);
+
+    // calculate length
+    result.m_length = utf8_strlen(result.m_data);
 
     return result;
 }
 
 Utf8String Utf8String::operator+(const Utf8String &other) const
 {
-    Utf8String result(Length() + other.Length());
+    Utf8String result(m_length + other.m_length);
 
     utf8_strcpy(result.m_data, m_data);
     utf8_strcat(result.m_data, other.m_data);
+
+    // calculate length
+    result.m_length = utf8_strlen(result.m_data);
 
     return result;
 }
@@ -472,6 +487,8 @@ Utf8String &Utf8String::operator+=(const char *str)
     if (this_len + other_len < m_size) {
         strcat(m_data, str);
         m_size += other_len;
+        // calculate utf-8 length of string and add it
+        m_length += utf8_strlen(str);
     } else {
         // we must delete and recreate the array
         m_size = this_len + other_len + 1;
@@ -481,6 +498,8 @@ Utf8String &Utf8String::operator+=(const char *str)
         strcat(new_data, str);
         delete[] m_data;
         m_data = new_data;
+        // recalculate length
+        m_length = utf8_strlen(m_data);
     }
 
     return *this;
@@ -522,23 +541,25 @@ int main()
         Utf8String us1("string 1, hi!");
         Utf8String us2("string 2.");
         us1 += "Blafjdjfkjdskfkjldsf";
-        
-        ucout << "us1 = " << us1 << "\n";
-        ucout << "us2 = " << us2 << "\n";
 
-        ucout << "strlen(buffer) = " << strlen(buffer) << "\n";
-        ucout << "utf8_strlen(buffer) = " << utf8_strlen(buffer) << "\n";
+        ucout << "us1 :: " << us1 << "\n";
+        ucout << "us2 :: " << us2 << "\n";
+        ucout << "utf8_strlen(us1.GetData()) :: " << utf8_strlen(us1.GetData()) << "\n";
+        ucout << "us1.GetLength() :: " << us1.GetLength() << "\n";
+
+        ucout << "strlen(buffer) :: " << strlen(buffer) << "\n";
+        ucout << "utf8_strlen(buffer) :: " << utf8_strlen(buffer) << "\n";
 
         u32char utf32_test[500];
         memset(utf32_test, 0, sizeof(utf32_test));
         utf8to32(buffer, utf32_test, 500);
 
-        ucout << "utf32_strlen(utf32_test) = " << utf32_strlen(utf32_test) << "\n";
+        ucout << "utf32_strlen(utf32_test) :: " << utf32_strlen(utf32_test) << "\n";
 
         { // get characters at index
             char utf8_char_buffer[4] = { 0 };
             utf8_charat(buffer, utf8_char_buffer, 9);
-            ucout << "utf8_charat(buffer, 9) = " << Utf8String(utf8_char_buffer) << "\n";
+            ucout << "utf8_charat(buffer, 9) :: " << Utf8String(utf8_char_buffer) << "\n";
         }
 
         ucout << Utf8String(buffer);
