@@ -3,13 +3,12 @@
 
 #include "simple-utf-8.hpp"
 
-using namespace utf;
-
 int main()
 {
     utf::init();
 
     utf::cout << "Reading utf-8 file \"utf-8-test.txt\"...\n";
+    
     std::ifstream file("utf-8-test.txt", std::ios::in | std::ios::ate | std::ios::binary);
 
     if (file.is_open()) {
